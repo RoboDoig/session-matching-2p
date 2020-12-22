@@ -1,15 +1,16 @@
-clear; close all; 
+clear; close all; clc;
 %% Basic info
 
 baseDir = 'E:\';
-mouse = 25;
+mouse = 27;
 % sessions = [1:6, 13:19, 22:31];
-sessions = [13:19];
+sessions = [5554];
 
 elapsedTimes = zeros(length(sessions),1);
 
-targetBD = 'E:\025\';
+targetBD = 'E:\027_Spontaneous\';
 targetDir = sprintf('%s%03d\\',targetBD,mouse);
+optotuneRingingTime = 8;
 %% Convert sbx files into h5 files in each imaging plane
 for si = 1 : length(sessions)
     if sessions(si) < 1000
