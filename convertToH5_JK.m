@@ -34,7 +34,7 @@ function [] = convertToH5_JK(sessionName,targetDir,optotuneRingingTime,varargin)
     framePlanes = trials.frame_to_use; % 2020/12/02 JK
 
     % extract frames for each plane and save
-    for i = 1:nPlanes
+    parfor i = 1:nPlanes
         if sessionNum > 1000 % spontaneous or piezo, where only upper or lower volume was imaged
            if mod(sessionNum,2) % odd, upper volume
                planeNum = i;
@@ -45,7 +45,9 @@ function [] = convertToH5_JK(sessionName,targetDir,optotuneRingingTime,varargin)
             planeNum = i;
         end
        planeDir = fullfile(targetDir, ['plane_' num2str(planeNum)]);
-       mkdir(planeDir);
+       if ~isfolder(planeDir)
+           mkdir(planeDir);
+       end
        planeFile = fullfile(planeDir, [sessionID, '_plane_', num2str(planeNum), '.h5']);
        nFrames = length(framePlanes{i});
        frameCounter = 1;
@@ -54,6 +56,7 @@ function [] = convertToH5_JK(sessionName,targetDir,optotuneRingingTime,varargin)
        testFrame = testFrame(yStart:end, xStart : end-xDeadband, :);
 
        if ~isfile(planeFile)
+           fprintf('Processing session %s plane %d\n', sessionName, i)
            h5create(planeFile, '/data', [size(testFrame, 1), size(testFrame, 2) nFrames], 'DataType', 'uint16', 'ChunkSize',[size(testFrame,1) size(testFrame,2) 1]) % chunking would be better with each separate image frame
            % load
            if ~isempty(loadBuffer) % in case where load buffer is specified

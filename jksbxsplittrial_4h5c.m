@@ -34,6 +34,13 @@ function jksbxsplittrial_4h5c(fn, varargin)
 
 % 2020/12/10
 % Fix for piezo deflections, where there was no bitcode recorded
+
+% 2021/01/02
+% Fix for piezo deflections mouse < 50, where TTL signals (info.event_id)
+% mean deflection onset (event_id == 3) and offset (event_id == 2)
+
+% 2021/01/02
+% 0-based frames from this day on. Before, it was 1-based frames
     %% check if already splitted or not
 %     if exist([fn,'.trials'],'file')
 %         fprintf('%s has already been split\n',fn)
@@ -43,8 +50,9 @@ function jksbxsplittrial_4h5c(fn, varargin)
     %% input arguments
     laserOffIncluded = 0;
     piezo = 0;
+    piezoLaser = 0;
     if nargin > 1
-        if isnumeric(varargin{1}) && min(varargin{1}) > 0 
+        if isnumeric(varargin{1})
             onFrames = varargin{1};
             laserOffIncluded = 1; % only for spontaneous and piezo. Not for regular training imaging sessions 
         elseif isempty(varargin{1})
@@ -60,9 +68,11 @@ function jksbxsplittrial_4h5c(fn, varargin)
         end
         if nargin > 2
             if strcmp(varargin{2},'piezo')
-                piezo = 1; % only for piezo. No bitcodes
+                piezo = 1; % only for piezo. No bitcodes (Mouse > 50)
+            elseif strcmp(varargin{2}, 'piezo_laser')
+                piezoLaser = 1; % only for piezo. No bitcodes (Mouse < 50)
             else
-                error('3rd input argument should be ''piezo''')
+                error('3rd input argument should be ''piezo'' or ''piezo_laser''. ')
             end
         end
     end
@@ -72,7 +82,7 @@ function jksbxsplittrial_4h5c(fn, varargin)
         a = squeeze(jksbxread(fn,0,1));
         global info    
         
-        if isfield(info,'event_id') && size(info.event_id,1) > 10 && ~piezo % at least for 10 event_id. Sometimes spontaneous imaging sessions can have 1-2 events.
+        if isfield(info,'event_id') && size(info.event_id,1) > 10 && ~piezo && ~piezoLaser % at least for 10 event_id. Sometimes spontaneous imaging sessions can have 1-2 events.
             % info.frame has limit at 2^16. Correct this
             % Don't save this for now. 2017/06/20 JK
             if info.max_idx > 2^16-1            
@@ -135,7 +145,7 @@ function jksbxsplittrial_4h5c(fn, varargin)
             %% reading and saving
             trials = struct('trialnum',[],'frames',[], 'lines', []);
             for i = 1:num_event
-                trials(i).trialnum = read_bitcode(bc_chunk_idx{i}, 10, 2, 5);                
+                trials(i).trialnum = read_bitcode(bc_chunk_idx{i}, 10, 2, 5);
                 if isempty(find(cellfun(@(x) strcmp(x,num2str(trials(i).trialnum)),info.messages),1))
                     disp(['Bitcode mismatch with message received by scanbox in event #' num2str(i) ' in ' fn '.sbx'])
                 end
@@ -149,21 +159,21 @@ function jksbxsplittrial_4h5c(fn, varargin)
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%
             % Assume objective is already sorted descending. (objective 1 higher, i.e., shallower, than objective 2)
             % Overall goal is to have all planes (including layers) sorted in descending order
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%    
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
             if info.volscan
                 num_plane = length(info.otwave_um);
             else
                 num_plane = 1;
                 plane_sorted = 1;
             end
-            max_idx = info.max_idx;
-            blockimaging = 0;            
+            maxInd = info.max_idx - mod(info.max_idx+1,num_plane);
+            blockimaging = 0;
             num_layer = 1;
             num_block = [];
             block_message_i = [];
             for message_i = 1 : length(info.messages)
                 if ~isempty(strfind(info.messages{message_i},'objective')) % for now, assume that number of planes is same across different blocks 
-                    blockimaging = 1;                
+                    blockimaging = 1;
                     num_block = [num_block, str2double(info.messages{message_i}(end))]; % number of layer on each imaging block. (1, 2, 3, ..., num_layer, 1, 2, 3, ..., num_layer, 1, 2, 3, ...)
                     num_layer = max([num_layer, str2double(info.messages{message_i}(end))]); % total num of layer
                     block_message_i = [block_message_i, message_i]; % index of info.messages written with imaging layer. (like a split marker)
@@ -197,8 +207,8 @@ function jksbxsplittrial_4h5c(fn, varargin)
                 end
 
                 trial_frames = cell(1,num_layer); % allocate frames to each layer
-                frames_beginning = 0:num_plane:max_idx;
-                frames_ending = num_plane-1:num_plane:max_idx;
+                frames_beginning = 0:num_plane:maxInd;
+                frames_ending = num_plane-1:num_plane:maxInd;
                 for ii = 1 : num_layer
                     trial_frames{ii} = []; 
                     for jj = 1 : length(layer_trials{ii})
@@ -223,21 +233,21 @@ function jksbxsplittrial_4h5c(fn, varargin)
                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
                 % Very important variable
                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
-                frame_to_use = cell(1,num_layer*num_plane); % this is going to be used for the rest of the analysis.        
+                frame_to_use = cell(1,num_layer*num_plane); % this is going to be used for the rest of the analysis.
                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
-                for ind_layer = 1 : num_layer                        
+                for ind_layer = 1 : num_layer
                     for ind_plane = 1 : num_plane
-                        frame_to_use{(ind_layer-1)*num_plane + plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:max_idx, trial_frames{ind_layer});
+                        frame_to_use{(ind_layer-1)*num_plane + plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:maxInd, trial_frames{ind_layer});
                         % treat volume-wise. All planes from the same layer of imaging have the same # of frames.
                     end
                 end
 
-            else % if not block_imaging                
+            else % if not block_imaging
                 trial_frames = [];
                 frame_to_use = cell(num_plane,1);
-                frames_beginning = 0:num_plane:max_idx;
-                frames_ending = num_plane-1:num_plane:max_idx;
+                frames_beginning = 0:num_plane:maxInd;
+                frames_ending = num_plane-1:num_plane:maxInd;
                 for trial_i = 1 : length(trials)
                     begin_frame = frames_beginning(find(frames_beginning > trials(trial_i).frames(1)+1, 1, 'first')); % +1 for udp timing buffer 11/26/2018 JK
                     end_frame = frames_ending(find(frames_ending < trials(trial_i).frames(2), 1, 'last'));
@@ -249,10 +259,10 @@ function jksbxsplittrial_4h5c(fn, varargin)
                     trial_frames = [trial_frames, currTrialFrames];
                 end
                 for ind_plane = 1 : num_plane
-                    frame_to_use{plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:max_idx,trial_frames);             
+                    frame_to_use{plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:maxInd,trial_frames);
                 end        
             end
-        elseif piezo % piezo deflection (or passive pole presentation) % 2020/12/10 JK
+        elseif piezo % piezo deflection (or passive pole presentation) % 2020/12/10 JK (for mouse > 50)
             % depends on info.messages
             num_event = length(info.messages);
             layer_trials = [];
@@ -263,9 +273,9 @@ function jksbxsplittrial_4h5c(fn, varargin)
             end
             
             if length(find(info.event_id == 3)) ~= num_event
-                error('Frame start mismatch')
+                error('Frame start mismatch at file %s', fn)
             elseif length(find(info.event_id == 2)) ~= num_event
-                error('Frame end mismatch')
+                error('Frame end mismatch at file %s', fn)
             end
             % in these cases, try manual ocrrection of info file
             % Use manual_correction_sbxinfo_messages.m
@@ -295,13 +305,15 @@ function jksbxsplittrial_4h5c(fn, varargin)
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%
             % Assume objective is already sorted descending. (objective 1 higher, i.e., shallower, than objective 2)
             % Overall goal is to have all planes (including layers) sorted in descending order
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%    
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
             if info.volscan
                 [~,plane_sorted] = sort(info.otwave,'descend'); % sorting from the top. 
                 num_plane = length(info.otwave_um);
                 
-                frames_beginning = 0:num_plane:info.max_idx;
-                frames_ending = num_plane-1:num_plane:info.max_idx;
+                maxInd = info.max_idx - mod(info.max_idx+1,num_plane);
+                
+                frames_beginning = 0:num_plane:maxInd;
+                frames_ending = num_plane-1:num_plane:maxInd;
                 
                 trial_frames = []; 
                 
@@ -321,16 +333,16 @@ function jksbxsplittrial_4h5c(fn, varargin)
                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
                 % Very important variable
                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
-                frame_to_use = cell(1,num_plane); % this is going to be used for the rest of the analysis.        
+                frame_to_use = cell(1,num_plane); % this is going to be used for the rest of the analysis.
                 %%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
                 for ind_plane = 1 : num_plane
-                    frame_to_use{plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:info.max_idx, trial_frames);
+                    frame_to_use{plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:maxInd, trial_frames);
                     % treat volume-wise. All planes from the same layer of imaging have the same # of frames.
                 end
 
             else
-                num_plane = 1;                
+                num_plane = 1;
                 frame_to_use = cell(num_plane,1);
                 trial_frames = [];
                 for kk = 1 : length(trials)
@@ -340,34 +352,93 @@ function jksbxsplittrial_4h5c(fn, varargin)
                     trial_frames = intersect(trial_frames, onFrames);
                 end
                 frame_to_use{1} = trial_frames;
-            end 
+            end
+        elseif piezoLaser
+            if ~laserOffIncluded
+                error('For ''piezo_laser'', there must be laser on frames (%s).', fn)
+            end
+            % depends on info.messages
+            num_event = length(info.messages);
+            layer_trials = [];
+            trials = []; 
+            blockimaging = 0; num_layer = 1;
+            if isfield(info, 'blankstart') % blankstart is set manually. Sometimes during file transfer using windows, the files get breached and turns into white blank frames. 2018/03/03 JK
+                info.max_idx = info.blankstart-1;
+            end
+            
+            if length(find(info.event_id == 3)) ~= num_event
+                error('Frame start mismatch at file %s', fn)
+            elseif length(find(info.event_id == 2)) ~= num_event
+                error('Frame end mismatch at file %s', fn)
+            end
+            % in these cases, try manual ocrrection of info file
+            % Use manual_correction_sbxinfo_messages.m
+
+            start_event = find(info.event_id==3);
+            end_event = find(info.event_id==2);
+            %% trials for piezo deflection
+            trials = struct('trialnum',[],'frames',[], 'lines', []);
+            for i = 1:num_event
+                trials(i).trialnum = str2double(info.messages{i});
+                trials(i).frames = [info.frame(start_event(i)),info.frame(end_event(i))];
+                trials(i).lines = [info.line(start_event(i)),info.line(end_event(i))];
+            end
+                
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            % Assume objective is already sorted descending. (objective 1 higher, i.e., shallower, than objective 2)
+            % Overall goal is to have all planes (including layers) sorted in descending order
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+            if info.volscan
+                [~,plane_sorted] = sort(info.otwave,'descend'); % sorting from the top. 
+                num_plane = length(info.otwave_um);
+                
+                maxInd = info.max_idx - mod(info.max_idx+1,num_plane);
+                
+                %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                % Very important variable
+                %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                frame_to_use = cell(1,num_plane); % this is going to be used for the rest of the analysis.
+                %%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+                for ind_plane = 1 : num_plane
+                    frame_to_use{plane_sorted(ind_plane)} = intersect(ind_plane-1:num_plane:maxInd, onFrames);
+                end
+            else
+                num_plane = 1;
+                frame_to_use = cell(num_plane,1);
+                trial_frames = onFrames;
+                frame_to_use{1} = trial_frames;
+            end
         else % spontaneous
             layer_trials = [];
             trials = []; 
             blockimaging = 0; num_layer = 1;
             if isfield(info, 'blankstart') % blankstart is set manually. Sometimes during file transfer using windows, the files get breached and turns into white blank frames. 2018/03/03 JK
                 info.max_idx = info.blankstart-1;
-            end            
+            end
             
             %%%%%%%%%%%%%%%%%%%%%%%%%%%%
             % Assume objective is already sorted descending. (objective 1 higher, i.e., shallower, than objective 2)
             % Overall goal is to have all planes (including layers) sorted in descending order
-            %%%%%%%%%%%%%%%%%%%%%%%%%%%%    
+            %%%%%%%%%%%%%%%%%%%%%%%%%%%%
             if info.volscan
                 [~,plane_sorted] = sort(info.otwave,'descend'); % sorting from the top. 
                 num_plane = length(info.otwave_um);
                 frame_to_use = cell(num_plane,1);
+                
+                % need to make # of frames from each frame the same
+                maxInd = info.max_idx - mod(info.max_idx+1,num_plane);
                 for ind_plane = 1 : num_plane
                     if laserOffIncluded
                         trial_frames = onFrames;
-                        frame_to_use{plane_sorted(ind_plane)} = intersect(onFrames,(plane_sorted(ind_plane):num_plane:info.max_idx));
+                        frame_to_use{plane_sorted(ind_plane)} = intersect(onFrames,(ind_plane-1 : num_plane : maxInd));
                     else
-                        trial_frames = 0:info.max_idx;
-                        frame_to_use{plane_sorted(ind_plane)} = (plane_sorted(ind_plane):num_plane:info.max_idx);
+                        trial_frames = 0:maxInd;
+                        frame_to_use{plane_sorted(ind_plane)} = ind_plane-1 : num_plane : maxInd;
                     end 
                 end 
             else
-                num_plane = 1;                
+                num_plane = 1;
                 frame_to_use = cell(num_plane,1);
                 if laserOffIncluded
                     trial_frames = onFrames;
